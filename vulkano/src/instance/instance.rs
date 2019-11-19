@@ -18,6 +18,7 @@ use std::ops::Deref;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
+use std::mem::MaybeUninit;
 
 use Error;
 use OomError;
@@ -94,7 +95,7 @@ pub struct Instance {
     //alloc: Option<Box<Alloc + Send + Sync>>,
     physical_devices: Vec<PhysicalDeviceInfos>,
     vk: vk::InstancePointers,
-    extensions: InstanceExtensions,
+    extensions: RawInstanceExtensions,
     layers: SmallVec<[CString; 16]>,
     function_pointers: OwnedOrRef<FunctionPointers<Box<dyn Loader + Send + Sync>>>,
 }
@@ -221,7 +222,7 @@ impl Instance {
                     .unwrap_or(0),
                 apiVersion: Version {
                     major: 1,
-                    minor: 0,
+                    minor: 1,
                     patch: 0,
                 }.into_vulkan_version(), // TODO:
             })
@@ -243,7 +244,7 @@ impl Instance {
 
         // Creating the Vulkan instance.
         let instance = unsafe {
-            let mut output = mem::uninitialized();
+            let mut output = MaybeUninit::uninit();
             let infos = vk::InstanceCreateInfo {
                 sType: vk::STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                 pNext: ptr::null(),
@@ -260,8 +261,8 @@ impl Instance {
             };
 
             let entry_points = function_pointers.entry_points();
-            check_errors(entry_points.CreateInstance(&infos, ptr::null(), &mut output))?;
-            output
+            check_errors(entry_points.CreateInstance(&infos, ptr::null(), output.as_mut_ptr()))?;
+            output.assume_init()
         };
 
         // Loading the function pointers of the newly-created instance.
@@ -282,12 +283,11 @@ impl Instance {
             devices
         };
 
-        // TODO: should be Into
-        let extensions: InstanceExtensions = (&extensions).into();
+        let vk_khr_get_physical_device_properties2 = CString::new(b"VK_KHR_get_physical_device_properties2".to_vec()).unwrap();
 
         // Getting the properties of all physical devices.
         // If possible, we use VK_KHR_get_physical_device_properties2.
-        let physical_devices = if extensions.khr_get_physical_device_properties2 {
+        let physical_devices = if extensions.iter().any(|v| *v == vk_khr_get_physical_device_properties2) {
             Instance::init_physical_devices2(&vk, physical_devices, &extensions)
         } else {
             Instance::init_physical_devices(&vk, physical_devices)
@@ -311,9 +311,9 @@ impl Instance {
 
         for device in physical_devices.into_iter() {
             let properties: vk::PhysicalDeviceProperties = unsafe {
-                let mut output = mem::uninitialized();
-                vk.GetPhysicalDeviceProperties(device, &mut output);
-                output
+                let mut output = MaybeUninit::uninit();
+                vk.GetPhysicalDeviceProperties(device, output.as_mut_ptr());
+                output.assume_init()
             };
 
             let queue_families = unsafe {
@@ -327,15 +327,15 @@ impl Instance {
             };
 
             let memory: vk::PhysicalDeviceMemoryProperties = unsafe {
-                let mut output = mem::uninitialized();
-                vk.GetPhysicalDeviceMemoryProperties(device, &mut output);
-                output
+                let mut output = MaybeUninit::uninit();
+                vk.GetPhysicalDeviceMemoryProperties(device, output.as_mut_ptr());
+                output.assume_init()
             };
 
             let available_features: vk::PhysicalDeviceFeatures = unsafe {
-                let mut output = mem::uninitialized();
-                vk.GetPhysicalDeviceFeatures(device, &mut output);
-                output
+                let mut output = MaybeUninit::uninit();
+                vk.GetPhysicalDeviceFeatures(device, output.as_mut_ptr());
+                output.assume_init()
             };
 
             output.push(PhysicalDeviceInfos {
@@ -353,7 +353,7 @@ impl Instance {
     /// TODO: Query extension-specific physical device properties, once a new instance extension is supported.
     fn init_physical_devices2(vk: &vk::InstancePointers,
                               physical_devices: Vec<vk::PhysicalDevice>,
-                              extensions: &InstanceExtensions)
+                              extensions: &RawInstanceExtensions)
                               -> Vec<PhysicalDeviceInfos> {
         let mut output = Vec::with_capacity(physical_devices.len());
 
@@ -362,7 +362,7 @@ impl Instance {
                 let mut output = vk::PhysicalDeviceProperties2KHR {
                     sType: vk::STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR,
                     pNext: ptr::null_mut(),
-                    properties: mem::uninitialized(),
+                    properties: mem::zeroed(),
                 };
 
                 vk.GetPhysicalDeviceProperties2KHR(device, &mut output);
@@ -378,7 +378,7 @@ impl Instance {
                              vk::QueueFamilyProperties2KHR {
                                  sType: vk::STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2_KHR,
                                  pNext: ptr::null_mut(),
-                                 queueFamilyProperties: mem::uninitialized(),
+                                 queueFamilyProperties: mem::zeroed(),
                              }
                          })
                     .collect::<Vec<_>>();
@@ -396,7 +396,7 @@ impl Instance {
                 let mut output = vk::PhysicalDeviceMemoryProperties2KHR {
                     sType: vk::STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR,
                     pNext: ptr::null_mut(),
-                    memoryProperties: mem::uninitialized(),
+                    memoryProperties: mem::zeroed(),
                 };
                 vk.GetPhysicalDeviceMemoryProperties2KHR(device, &mut output);
                 output.memoryProperties
@@ -406,7 +406,7 @@ impl Instance {
                 let mut output = vk::PhysicalDeviceFeatures2KHR {
                     sType: vk::STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR,
                     pNext: ptr::null_mut(),
-                    features: mem::uninitialized(),
+                    features: mem::zeroed(),
                 };
                 vk.GetPhysicalDeviceFeatures2KHR(device, &mut output);
                 output.features
@@ -449,10 +449,15 @@ impl Instance {
     ///
     /// let extensions = InstanceExtensions::supported_by_core().unwrap();
     /// let instance = Instance::new(None, &extensions, None).unwrap();
-    /// assert_eq!(instance.loaded_extensions(), &extensions);
+    /// assert_eq!(instance.loaded_extensions(), extensions);
     /// ```
     #[inline]
-    pub fn loaded_extensions(&self) -> &InstanceExtensions {
+    pub fn loaded_extensions(&self) -> InstanceExtensions {
+        InstanceExtensions::from(&self.extensions)
+    }
+
+     #[inline]
+    pub fn raw_loaded_extensions(&self) -> &RawInstanceExtensions {
         &self.extensions
     }
 
@@ -474,7 +479,7 @@ impl fmt::Debug for Instance {
 unsafe impl VulkanObject for Instance {
     type Object = vk::Instance;
 
-    const TYPE: vk::DebugReportObjectTypeEXT = vk::DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT;
+    const TYPE: vk::ObjectType = vk::OBJECT_TYPE_INSTANCE;
 
     #[inline]
     fn internal_object(&self) -> vk::Instance {
@@ -948,7 +953,7 @@ impl<'a> PhysicalDevice<'a> {
 unsafe impl<'a> VulkanObject for PhysicalDevice<'a> {
     type Object = vk::PhysicalDevice;
 
-    const TYPE: vk::DebugReportObjectTypeEXT = vk::DEBUG_REPORT_OBJECT_TYPE_PHYSICAL_DEVICE_EXT;
+    const TYPE: vk::ObjectType = vk::OBJECT_TYPE_PHYSICAL_DEVICE;
 
     #[inline]
     fn internal_object(&self) -> vk::PhysicalDevice {

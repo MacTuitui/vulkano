@@ -155,6 +155,8 @@ fn main() {
 
         match future {
             Ok(future) => {
+                // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                future.wait(None).unwrap();
                 previous_frame_end = Box::new(future) as Box<_>;
             }
             Err(FlushError::OutOfDate) => {

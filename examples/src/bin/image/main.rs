@@ -27,7 +27,8 @@ use vulkano_win::VkSurfaceBuild;
 
 use winit::{EventsLoop, Window, WindowBuilder, Event, WindowEvent};
 
-use image::ImageFormat;
+use png;
+use std::io::Cursor;
 
 use std::sync::Arc;
 
@@ -112,13 +113,18 @@ fn main() {
     );
 
     let (texture, tex_future) = {
-        let image = image::load_from_memory_with_format(include_bytes!("image_img.png"),
-            ImageFormat::PNG).unwrap().to_rgba();
-        let image_data = image.into_raw().clone();
+        let png_bytes = include_bytes!("image_img.png").to_vec();
+        let cursor = Cursor::new(png_bytes);
+        let decoder = png::Decoder::new(cursor);
+        let (info, mut reader) = decoder.read_info().unwrap();
+        let dimensions = Dimensions::Dim2d { width: info.width, height: info.height };
+        let mut image_data = Vec::new();
+        image_data.resize((info.width * info.height * 4) as usize, 0);
+        reader.next_frame(&mut image_data).unwrap();
 
         ImmutableImage::from_iter(
             image_data.iter().cloned(),
-            Dimensions::Dim2d { width: 93, height: 93 },
+            dimensions,
             Format::R8G8B8A8Srgb,
             queue.clone()
         ).unwrap()
@@ -144,7 +150,7 @@ fn main() {
         .build().unwrap()
     );
 
-    let mut dynamic_state = DynamicState { line_width: None, viewports: None, scissors: None };
+    let mut dynamic_state = DynamicState { line_width: None, viewports: None, scissors: None, compare_mask: None, write_mask: None, reference: None };
     let mut framebuffers = window_size_dependent_setup(&images, render_pass.clone(), &mut dynamic_state);
 
     let mut recreate_swapchain = false;
@@ -196,6 +202,8 @@ fn main() {
 
         match future {
             Ok(future) => {
+                // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                future.wait(None).unwrap();
                 previous_frame_end = Box::new(future) as Box<_>;
             }
             Err(FlushError::OutOfDate) => {

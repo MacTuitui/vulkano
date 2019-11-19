@@ -1,5 +1,27 @@
 # Unreleased
 
+# Version 0.16.0 (2019-11-01)
+
+- Fixed bug in examples causing OutOfHostMemory errors
+- Replaced `VK_EXT_debug_report` `VK_EXT_debug_marker` with `VK_EXT_debug_utils`.
+- Update MacOS dependencies metal to 0.17 and cocoa to 0.19
+- Added dynamic stencil elements to `DynamicState`
+- Fixed `ImageDimensions::mipmap_dimensions` and `max_mipmaps` in cases where the original size is not a power of two.
+- Shader includes now work on Windows.
+- **Breaking Change** Shader include directories passed to the `shader!` macro are now relative to the crates `Cargo.toml`
+- Add support for `VK_KHR_16bit_storage` and `VK_KHR_storage_buffer_storage_class` device extensions.
+- Update Winit to 0.20.0
+- Update dependencies: lazy_static, half, syn, quote & proc-macro2
+- Swapchain can now be recreated with dimensions of corresponding surface using `recreate()`.
+- Added `raw_loaded_extensions()` to `Instance` to allow querying of all extensions, not just known ones.
+- **Breaking Change** `loaded_extensions()` on `Instance` no longer returns a reference.
+- Add support for GLSL macro defines to the `shader!` macro.
+- Switch to Vulkan 1.1 and inherently SpirV 1.3 (shaderc default version for vulkan 1.1)
+
+# Version 0.15.0 (2019-10-18)
+
+*Yanked*
+
 # Version 0.14.0 (2019-08-17)
 
 - Update shaderc to 0.6. This again allows to use locally installed libraries which reduces the build-time significantly on Arch/Voidlinux (see https://github.com/google/shaderc-rs/issues/58)

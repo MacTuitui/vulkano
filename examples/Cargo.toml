@@ -18,5 +18,5 @@ winit = "0.19"
 vulkano-win = { path = "../vulkano-win" }
 
 cgmath = "0.17"
-image = "0.21"
+png = "0.15.0"
 time = "0.1.38"
